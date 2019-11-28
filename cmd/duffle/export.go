@@ -3,11 +3,14 @@ package main
 import (
 	"fmt"
 	"io"
+	"net/http"
 
 	"github.com/deislabs/cnab-go/bundle/loader"
+	"github.com/pivotal/image-relocation/pkg/transport"
 	"github.com/spf13/cobra"
 
 	"github.com/deislabs/duffle/pkg/duffle/home"
+	"github.com/deislabs/duffle/pkg/imagestore"
 	"github.com/deislabs/duffle/pkg/imagestore/construction"
 	"github.com/deislabs/duffle/pkg/packager"
 )
@@ -30,17 +33,32 @@ $ duffle export [PATH] --bundle-is-file
 `
 
 type exportCmd struct {
-	bundle       string
-	dest         string
-	home         home.Home
-	out          io.Writer
-	thin         bool
-	verbose      bool
-	bundleIsFile bool
+	// args
+	bundle string
+
+	// flags
+	dest          string
+	thin          bool
+	verbose       bool
+	bundleIsFile  bool
+	skipTLSVerify bool
+	caCertPaths   []string
+
+	// context
+	home home.Home
+	out  io.Writer
+
+	// dependencies
+	transportProvider             func([]string, bool) (*http.Transport, error)
+	imageStoreConstructorProvider func(bool) imagestore.Constructor
 }
 
 func newExportCmd(w io.Writer) *cobra.Command {
-	export := &exportCmd{out: w}
+	export := &exportCmd{
+		out:                           w,
+		transportProvider:             transport.NewHttpTransport,
+		imageStoreConstructorProvider: construction.NewConstructor,
+	}
 
 	cmd := &cobra.Command{
 		Use:   "export [BUNDLE]",
@@ -60,6 +78,8 @@ func newExportCmd(w io.Writer) *cobra.Command {
 	f.BoolVarP(&export.bundleIsFile, "bundle-is-file", "f", false, "Interpret the bundle source as a file path")
 	f.BoolVarP(&export.thin, "thin", "t", false, "Export only the bundle manifest")
 	f.BoolVarP(&export.verbose, "verbose", "v", false, "Verbose output")
+	f.StringSliceVarP(&export.caCertPaths, "ca-cert-path", "", nil, "Path to CA certificate for verifying registry TLS certificates (can be repeated for multiple certificates)")
+	f.BoolVarP(&export.skipTLSVerify, "skip-tls-verify", "", false, "Skip TLS certificate verification for registries")
 
 	return cmd
 }
@@ -69,6 +89,7 @@ func (ex *exportCmd) run() error {
 	if err != nil {
 		return err
 	}
+
 	if err := ex.Export(bundlefile, l); err != nil {
 		return err
 	}
@@ -77,26 +98,35 @@ func (ex *exportCmd) run() error {
 }
 
 func (ex *exportCmd) Export(bundlefile string, l loader.BundleLoader) error {
-	ctor, err := construction.NewConstructor(ex.thin)
-	if err != nil {
-		return err
+	ctor := func(opts ...imagestore.Option) (imagestore.Store, error) {
+		transport, err := ex.transportProvider(ex.caCertPaths, ex.skipTLSVerify)
+		if err != nil {
+			return nil, err
+		}
+
+		opts = append(opts, imagestore.WithTransport(transport))
+		return ex.imageStoreConstructorProvider(ex.thin)(opts...)
 	}
 
 	exp, err := packager.NewExporter(bundlefile, ex.dest, ex.home.Logs(), l, ctor)
 	if err != nil {
 		return fmt.Errorf("Unable to set up exporter: %s", err)
 	}
+
 	if err := exp.Export(); err != nil {
 		return err
 	}
+
 	if ex.verbose {
 		fmt.Fprintf(ex.out, "Export logs: %s\n", exp.Logs())
 	}
+
 	return nil
 }
 
 func (ex *exportCmd) setup() (string, loader.BundleLoader, error) {
 	l := loader.New()
+
 	bundlefile, err := resolveBundleFilePath(ex.bundle, ex.home.String(), ex.bundleIsFile)
 	if err != nil {
 		return "", l, err
@@ -106,7 +136,6 @@ func (ex *exportCmd) setup() (string, loader.BundleLoader, error) {
 }
 
 func resolveBundleFilePath(bun, homePath string, bundleIsFile bool) (string, error) {
-
 	if bundleIsFile {
 		return bun, nil
 	}
@@ -115,5 +144,6 @@ func resolveBundleFilePath(bun, homePath string, bundleIsFile bool) (string, err
 	if err != nil {
 		return "", err
 	}
+
 	return bundlefile, err
 }

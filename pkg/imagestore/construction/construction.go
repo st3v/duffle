@@ -15,12 +15,12 @@ var (
 )
 
 // NewConstructor creates an image store constructor which will, if necessary, create archive contents.
-func NewConstructor(remoteRepos bool) (imagestore.Constructor, error) {
+func NewConstructor(remoteRepos bool) imagestore.Constructor {
 	// infer the concrete type of the image store from the input parameters
 	if remoteRepos {
-		return remote.Create, nil
+		return remote.Create
 	}
-	return ocilayout.Create, nil
+	return ocilayout.Create
 }
 
 // NewLocatingConstructor creates an image store constructor which will, if necessary, find existing archive contents.

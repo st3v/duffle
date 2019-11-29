@@ -10,24 +10,14 @@ import (
 )
 
 func TestBundleRemove(t *testing.T) {
-	tempDuffleHome, err := ioutil.TempDir("", "duffle-home")
-	if err != nil {
-		t.Fatal(err)
-	}
+	tempDuffleHome := mustSetupTempDuffleHome(t)
 	defer os.Remove(tempDuffleHome)
-	duffleHome := home.Home(tempDuffleHome)
-	if err := os.MkdirAll(duffleHome.Bundles(), 0755); err != nil {
-		t.Fatal(err)
-	}
-	if err := copyTestBundle(tempDuffleHome); err != nil {
-		t.Fatal(err)
-	}
+	mustCopyTestBundle(t, tempDuffleHome)
 
-	out := ioutil.Discard
 	cmd := bundleRemoveCmd{
-		home:      duffleHome,
+		home:      home.Home(tempDuffleHome),
 		bundleRef: "foo",
-		out:       out,
+		out:       ioutil.Discard,
 	}
 	if err := cmd.run(); err != nil {
 		t.Errorf("Did not expect error, got %s", err)
